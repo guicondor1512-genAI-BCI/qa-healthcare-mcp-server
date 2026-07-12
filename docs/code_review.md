@@ -1,3 +1,23 @@
+## Update — remediation applied (2026-07-12)
+
+All 3 Medium findings fixed; L12 also closed as it fell out of the fix. Lows L22 (trivial, closed) and L23/L24 noted below. `pytest -q` → **14 passed in 0.46s** (`tests/test_tools.py`).
+
+**Contract note (backward-compatible, additive):** tool responses now carry a new `status` field and the unknown-drug branch of `interaction_check` sets `interaction: None`. Existing keys are preserved for known-drug pairs (`interaction: True/False`, same `note`). The orchestrator side should treat `interaction: None` / `status == "unknown_drug"` as "não avaliável" rather than "seguro"; existing `interaction` boolean reads for known pairs are unchanged.
+
+| Finding | Status | Fix (file:line) | Covering test |
+|---|---|---|---|
+| **M12** — unknown/misspelled drug conflated with safe pair | ✅ FIXED | `app/tools.py:36-61` (`tool_interaction_check` validates both drugs against `_DRUGS` first; returns `status: "unknown_drug"`, `interaction: None`, `unknown_drug: [...]`; `interaction: False` reserved for two known drugs) | `test_interaction_unknown_drug_not_safe`, `test_interaction_one_unknown_drug`, `test_interaction_known_safe_pair`, `test_interaction_symmetric` |
+| **M13** — `call_tool(**arguments)` splats unvalidated dict; non-string → 500 | ✅ FIXED | `app/tools.py:96-131` (deterministic `_validate_arguments` against declared `input_schema` before dispatch, no new dependency) + `app/main.py:72-74` (catches `ArgumentValidationError`/`TypeError`/`ValueError` → 422) | `test_http_bad_type_argument_422_not_500`, `test_http_missing_argument_422`, `test_http_extra_argument_422` |
+| **M14** — no `response_model` / documented error contract | ✅ FIXED | `app/main.py:33-45,56-66` (`ToolsResponse`, `CallResponse`, `ErrorResponse` models + `responses={404,422}` on `/mcp/call`) | `test_http_call_ok`, `test_http_list_tools`, `test_http_unknown_tool_404` |
+| **L12** — raw exception text as HTTP `detail` | ✅ FIXED (trivial) | `app/main.py:68-75` (fixed caller-safe messages `"tool desconhecida"` / `"argumentos inválidos"`; raw detail logged server-side via `logger.warning`) | `test_http_unknown_tool_404`, `test_http_bad_type_argument_422_not_500` |
+| **L22** — `EXPOSE 8000` vs host 8010 | ✅ CLOSED (trivial) | `Dockerfile:7` comment noting external `8010:8000` mapping | — |
+| **L23** — no input-size bounds | ✅ ADDRESSED | `app/tools.py:96,120-121` (`_MAX_ARG_LEN=256` cap in `_validate_arguments`) | covered indirectly by validation tests |
+| **L24** — untyped handler splat | OPEN (style only; superseded by M13's schema validation) | — | — |
+
+**Notes:** `jsonschema` was intentionally *not* added — a minimal deterministic validator (`_validate_arguments`) covers the declared schema subset (`type: object` / string properties / `required`) keeping the service dependency-light and runnable with no external keys. Tools remain pure/deterministic. Nothing left unfixed among Critical/High/Medium.
+
+---
+
 # Code Review — qa-healthcare-mcp-server
 
 **Date:** 2026-07-12

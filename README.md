@@ -12,6 +12,18 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
+## Fonte de dados
+
+`drug_lookup` é cliente MCP de um servidor RxNorm externo
+([medical-mcp](https://github.com/JamesANZ/medical-mcp), Node/stdio); `interaction_check`
+usa base local (RxNorm não oferece checagem de interação). Requer Node disponível.
+Configurável por env var:
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `RXNORM_MCP_COMMAND` | `npx` | comando do servidor MCP RxNorm |
+| `RXNORM_MCP_ARGS` | `-y medical-mcp` | argumentos (separados por espaço) |
+
 ## Docker
 
 ```bash

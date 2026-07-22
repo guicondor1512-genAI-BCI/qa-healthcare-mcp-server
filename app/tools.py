@@ -1,33 +1,54 @@
 """MCP Server — ferramentas de healthcare (spec §4, §10).
 
 Implementa um subconjunto do Model Context Protocol suficiente para o orquestrador:
-listar tools e invocá-las. As tools operam sobre uma base local de exemplo; em
-produção chamariam APIs externas (bulário, RxNorm, DrugBank), protegidas pelos
-guardrails operacionais (circuit breaker/timeout) do orquestrador.
+listar tools e invocá-las. `drug_lookup` atua como cliente MCP de um servidor RxNorm
+externo (medical-mcp/stdio, ver rxnorm_client); `interaction_check` usa uma base local
+de interações (o RxNorm não oferece checagem de interação). A resiliência
+(circuit breaker/timeout) é responsabilidade do orquestrador.
 """
 from __future__ import annotations
 
+import inspect
+import re
 from typing import Any, Callable
 
-# ---- Base de exemplo ----
-_DRUGS: dict[str, dict[str, Any]] = {
-    "sertralina": {"classe": "ISRS", "dose_inicial": "50 mg/dia", "indicacao": "depressão, ansiedade"},
-    "fluoxetina": {"classe": "ISRS", "dose_inicial": "20 mg/dia", "indicacao": "depressão"},
-    "ibuprofeno": {"classe": "AINE", "dose_inicial": "200-400 mg", "indicacao": "febre, dor"},
-    "semaglutida": {"classe": "agonista GLP-1", "dose_inicial": "0,25 mg/semana", "indicacao": "peso, DM2"},
-}
+from . import rxnorm_client
 
+# ---- Interacoes: base local (RxNorm nao oferece checagem de interacao) ----
 _INTERACTIONS: dict[frozenset[str], str] = {
     frozenset({"sertralina", "ibuprofeno"}): "Risco aumentado de sangramento GI; usar com cautela.",
     frozenset({"sertralina", "fluoxetina"}): "Ambos ISRS: risco de síndrome serotoninérgica.",
 }
 
+# Fármacos que a base de interação conhece: os que aparecem em algum par.
+# Só é seguro afirmar "sem interação" quando AMBOS estão neste conjunto.
+_KNOWN_DRUGS: frozenset[str] = frozenset().union(*_INTERACTIONS.keys())
 
-def tool_drug_lookup(name: str) -> dict[str, Any]:
-    info = _DRUGS.get(name.strip().lower())
+# ---- Parsing do texto RxNorm (search-drug-nomenclature) ----
+_RXCUI_RE = re.compile(r"RxCUI:\s*(\d+)")
+_NAME_RE = re.compile(r"\*\*(.+?)\*\*")
+
+
+def _parse_rxnorm(text: str) -> dict[str, Any] | None:
+    """Extrai o primeiro conceito RxNorm do texto; None se nao houver RxCUI."""
+    rxcui = _RXCUI_RE.search(text)
+    if rxcui is None:
+        return None
+    name = _NAME_RE.search(text)
     return {
-        "found": info is not None,
-        "status": "found" if info is not None else "unknown_drug",
+        "rxcui": rxcui.group(1),
+        "normalized_name": name.group(1).strip() if name else "",
+        "rxnorm_text": text,
+    }
+
+
+async def tool_drug_lookup(name: str) -> dict[str, Any]:
+    text = await rxnorm_client.normalize_drug(name)
+    info = _parse_rxnorm(text)
+    found = info is not None
+    return {
+        "found": found,
+        "status": "found" if found else "unknown_drug",
         "drug": name,
         "info": info or {},
     }
@@ -39,7 +60,7 @@ def tool_interaction_check(drug_a: str, drug_b: str) -> dict[str, Any]:
 
     # M12: distinguir "medicamento desconhecido/erro de digitação" de "par seguro conhecido".
     # Só é seguro afirmar "sem interação" quando AMBOS os fármacos existem na base.
-    unknown = [orig for orig, norm in ((drug_a, norm_a), (drug_b, norm_b)) if norm not in _DRUGS]
+    unknown = [orig for orig, norm in ((drug_a, norm_a), (drug_b, norm_b)) if norm not in _KNOWN_DRUGS]
     if unknown:
         return {
             "pair": [drug_a, drug_b],
@@ -121,10 +142,13 @@ def _validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> No
                 raise ArgumentValidationError(f"campo '{key}' excede o tamanho máximo")
 
 
-def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name not in TOOLS:
         raise KeyError(f"tool desconhecida: {name}")
     tool = TOOLS[name]
     _validate_arguments(tool["input_schema"], arguments)
-    handler: Callable[..., dict[str, Any]] = tool["handler"]
-    return handler(**arguments)
+    handler: Callable[..., Any] = tool["handler"]
+    result = handler(**arguments)
+    if inspect.isawaitable(result):
+        result = await result
+    return result

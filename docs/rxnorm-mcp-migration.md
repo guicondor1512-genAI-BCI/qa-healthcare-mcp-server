@@ -405,9 +405,24 @@ Conclusões:
 - `interaction_check` (local) permanece ~4 ms: o serviço em si não ficou mais lento;
   só a tool que passou a fazer I/O de rede real.
 
-Alavancas de otimização (fora do escopo desta migração):
-- **Sessão MCP persistente** (em vez de subprocesso por chamada) elimina os ~150 ms.
-- **Cache** de RxCUI por nome corta a maior parte do ~1.5 s em nomes repetidos.
+Alavancas de otimização:
+- **Cache** de RxCUI por nome corta a maior parte do ~1.5 s em nomes repetidos. **Feito** (§8.1).
+- **Sessão MCP persistente** (em vez de subprocesso por chamada) eliminaria os ~150 ms,
+  mas só no cache miss (~9% do custo de um miss) e ao preço de manter um subprocesso
+  vivo com gestão de ciclo de vida/reconexão. **Não vale** a complexidade neste serviço.
+
+### 8.1 Cache de RxCUI (implementado)
+
+Cache em memória por nome normalizado em `rxnorm_client` (RxNorm é praticamente
+estático). Medição em Docker:
+
+| Chamada | Latência |
+|---|---|
+| 1ª (cache **miss** → RxNav) | ~1.7–1.9s |
+| 2ª+ (cache **hit**) | **~0.002s** |
+
+O hit volta ao patamar do dict antigo (~2–4 ms). Só o primeiro acesso a cada nome paga
+o RxNav; nomes repetidos ficam instantâneos.
 
 > Nota: a medição usou um servidor RxNorm MCP compatível próprio (`rxnorm_mcp_server.py`),
 > porque o `medical-mcp` da comunidade **quebra o handshake stdio** ao imprimir um banner

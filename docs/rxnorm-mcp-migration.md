@@ -323,6 +323,34 @@ integração real ficava minutos sem retorno.
   # 1 passed
   ```
 
+### 5.5 `medical-mcp` quebra o handshake stdio (banner no stdout)
+
+**Sintoma:** no container, `drug_lookup` retornava 500 (`BrokenResourceError`) ou
+pendurava >120 s. A chamada REST direta ao RxNav do próprio container funcionava em
+< 2 s, isolando o problema no servidor MCP.
+
+**Causa raiz (provada):** ao subir, o `medical-mcp` imprime um banner no **stdout**:
+
+```
+🚨 MEDICAL MCP SERVER - SAFETY NOTICE:
+...
+📊 DYNAMIC DATA SOURCE NOTICE:
+```
+
+No transporte MCP **stdio**, o stdout deve conter **apenas** mensagens JSON-RPC. O
+banner corrompe o stream, o parser do cliente falha e o `initialize` nunca completa.
+(Além disso, o bin `build/index.js` não tem shebang, então `RXNORM_MCP_COMMAND=medical-mcp`
+cai no `/bin/sh` — é preciso invocar via `node <path>`.)
+
+**Resolução:** usar um servidor RxNorm MCP **compatível** (`rxnorm_mcp_server.py`,
+FastMCP) que mantém o stdout limpo e bate no RxNav real. O design é agnóstico ao
+servidor (comando por env var), então a troca é só de configuração:
+
+```
+RXNORM_MCP_COMMAND=python
+RXNORM_MCP_ARGS=/app/rxnorm_mcp_server.py
+```
+
 ---
 
 ## 6. Estratégia de testes
@@ -351,7 +379,42 @@ sem mudança de código (desde que exponha a tool `search-drug-nomenclature`).
 
 ---
 
-## 8. Limitações e responsabilidades
+## 8. Latência: antes vs depois (medido em Docker)
+
+Medição com `docker compose` (12 iterações por cenário). O serviço antigo (dict,
+do repo deploy) rodou em `8010`; o novo (rxnorm-mcp) em `8011`.
+
+| Cenário | mediana | avg | min–max |
+|---|---|---|---|
+| **Antigo** `drug_lookup` (dict) — 8010 | 0.004s | 0.004s | 0.004–0.005s |
+| Novo `interaction_check` (local, inalterado) — 8011 | 0.004s | 0.004s | 0.004–0.005s |
+| **Novo** `drug_lookup` (rxnorm-mcp real) — 8011 | **1.469s** | 1.498s | 1.416–1.842s |
+
+**Sim, a latência aumentou** — de ~4 ms para ~1.5 s no `drug_lookup` (~370x). Atribuição:
+
+| Componente | mediana |
+|---|---|
+| Encanamento MCP (spawn do subprocesso + handshake stdio, por chamada) | ~0.151s |
+| REST ao RxNav (fonte real, NLM) | ~1.58s |
+
+Conclusões:
+- O aumento é **dominado pela rede ao RxNav** (~1.3–1.9 s), que é o custo de usar dados
+  reais em vez de um dicionário em memória — não pelo protocolo MCP.
+- O overhead do **modelo de cliente MCP** (subprocesso + handshake a cada chamada) é
+  pequeno (~150 ms) perto do RxNav, mas não-desprezível.
+- `interaction_check` (local) permanece ~4 ms: o serviço em si não ficou mais lento;
+  só a tool que passou a fazer I/O de rede real.
+
+Alavancas de otimização (fora do escopo desta migração):
+- **Sessão MCP persistente** (em vez de subprocesso por chamada) elimina os ~150 ms.
+- **Cache** de RxCUI por nome corta a maior parte do ~1.5 s em nomes repetidos.
+
+> Nota: a medição usou um servidor RxNorm MCP compatível próprio (`rxnorm_mcp_server.py`),
+> porque o `medical-mcp` da comunidade **quebra o handshake stdio** ao imprimir um banner
+> no stdout (ver §5.5). O overhead de spawn de um servidor Node seria um pouco maior no
+> cold-start, mas a conclusão (RxNav domina) não muda.
+
+## 9. Limitações e responsabilidades
 
 - **Sem resiliência local** (timeout/retry/circuit breaker): é responsabilidade do
   orquestrador, conforme o comentário original do serviço.

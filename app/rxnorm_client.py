@@ -4,9 +4,12 @@ Isola a camada de rede: abre uma sessao stdio por chamada, invoca a tool
 `search-drug-nomenclature` e retorna o texto agregado do resultado. Resiliencia
 (timeout/circuit breaker) e responsabilidade do orquestrador.
 
-Config por env var:
-  RXNORM_MCP_COMMAND  comando do servidor (default: npx)
-  RXNORM_MCP_ARGS     argumentos separados por espaco (default: -y medical-mcp)
+Config por env var (a imagem Docker define os defaults de produção):
+  RXNORM_MCP_COMMAND  comando do servidor (default: python)
+  RXNORM_MCP_ARGS     argumentos separados por espaco (default: rxnorm_mcp_server.py)
+
+Nota: o medical-mcp da comunidade nao funciona por stdio (polui o stdout com um
+banner e quebra o handshake JSON-RPC); usamos rxnorm_mcp_server.py, compativel.
 """
 from __future__ import annotations
 
@@ -20,8 +23,8 @@ _TOOL_NAME = "search-drug-nomenclature"
 
 
 def _server_params() -> StdioServerParameters:
-    command = os.environ.get("RXNORM_MCP_COMMAND", "npx")
-    args = shlex.split(os.environ.get("RXNORM_MCP_ARGS", "-y medical-mcp"))
+    command = os.environ.get("RXNORM_MCP_COMMAND", "python")
+    args = shlex.split(os.environ.get("RXNORM_MCP_ARGS", "rxnorm_mcp_server.py"))
     return StdioServerParameters(command=command, args=args)
 
 

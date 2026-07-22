@@ -1,0 +1,14 @@
+# Compose enxuto para subir SOMENTE o mcp-server (medir latencia do rxnorm-mcp).
+# A plataforma completa fica no repo qa-healthcare-deploy.
+services:
+  mcp-server:
+    build: .
+    ports:
+      - "8010:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped

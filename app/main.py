@@ -64,7 +64,7 @@ async def tools() -> dict:
 )
 async def call(req: CallReq) -> dict:
     try:
-        result = call_tool(req.name, req.arguments)
+        result = await call_tool(req.name, req.arguments)
     except KeyError as exc:
         # L12: mensagem fixa e segura ao chamador; detalhe bruto só no log do servidor.
         logger.warning("tool desconhecida: %s", req.name)

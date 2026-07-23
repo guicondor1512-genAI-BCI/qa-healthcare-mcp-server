@@ -86,7 +86,7 @@ def tool_interaction_check(drug_a: str, drug_b: str) -> dict[str, Any]:
 # ---- Registro de tools no estilo MCP ----
 TOOLS: dict[str, dict[str, Any]] = {
     "drug_lookup": {
-        "description": "Consulta classe, dose inicial e indicação de um medicamento.",
+        "description": "Normaliza um medicamento no RxNorm (RxCUI e nome padronizado).",
         "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
         "handler": tool_drug_lookup,
     },
